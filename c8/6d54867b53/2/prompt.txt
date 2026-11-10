@@ -1,0 +1,17 @@
+Read-only research in /Users/nandkishorr/work/care/care_fe_ccn_referral (a git worktree checked out at upstream branch 3.1/base). Do not modify any files.
+
+Goal: summarize the native Referral UI so we can extend it for CCN/Beckn network referrals.
+
+Read and summarize:
+- Types/API: src/types/emr/referral/referral.ts, referralApi.ts, referralResource*.ts, referralConversation*.ts, plus any referralAvailability types/api (search src/types for "availability" related to referral). Give full excerpts of: Referral type(s) (read/create/update), ReferralEntityType, ReferralStatus, ReferralType, ReferralAvailability type (incl. entity_type, external_entity, referral_type, status, is_public), and every API route (path, method, TRes/TBody) in referralApi and availability api.
+- Components in src/components/Referral/*, especially CreateReferralDialog.tsx, ReferralDestinationPicker.tsx, ReferralList.tsx, ReferralFilters.tsx, ReferralStatusBadge.tsx, ReferralWorkflowActions.tsx, ReferralQuestionnaireForm.tsx, ReferralAssignmentDialog.tsx, ReferralConversation.tsx, useReferralPermissions.ts. For each: props, purpose, queries (queryKey + api), mutations, where used.
+- ReferralDestinationPicker.tsx: describe in detail how destination types are chosen (around lines 300–340), what queries list availabilities (query params used, e.g. entity_type, referral_type, status, facility), and confirm whether entity_type "external" is selectable. Include the relevant code excerpt verbatim.
+- CreateReferralDialog: exact create payload built and submit flow, questionnaire handling, success navigation / query invalidation.
+- Pages and routes: src/Routers/routes/ReferralRoutes.tsx, src/pages/Referrals/*, src/pages/Facility/referrals/FacilityReferrals.tsx, src/pages/Encounters/tabs/referrals.tsx, src/pages/Encounters/widgets/EncounterReferralsWidget.tsx, src/components/Patient/PatientDetailsTab/PatientReferrals.tsx, src/pages/Organization/*Referral*. List routes, which page is the referral details page, where status badge is displayed (list rows, details header), and where availability info is displayed.
+- Availability settings: src/pages/Facility/settings/referrals/* — how availabilities are listed/created, entity types supported.
+- How a referral is created, responded to, assigned, and how its status changes (status transitions allowed in ReferralWorkflowActions and permission checks).
+- Query keys used (list all distinct queryKey prefixes for referral data) for invalidation planning.
+- Note existing Playwright tests under tests/ that touch referrals (file paths, what they cover, helper functions used).
+- Check whether src/types/beckn, CcnConsole, ResourceRequest types or resource routes exist in this tree at all (grep).
+
+Return a structured detailed report with file paths + line numbers and verbatim excerpts of key types and the destination picker code. Stop when done.
