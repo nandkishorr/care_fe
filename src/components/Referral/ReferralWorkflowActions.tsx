@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { refreshNetworkTransaction } from "@/components/Referral/network/networkReferral";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -133,6 +134,7 @@ export function ReferralWorkflowActions({
     },
     onSuccess: async () => {
       setConfirmation(null);
+      refreshNetworkTransaction(client, referral.availability);
       await client.invalidateQueries({ queryKey: ["referrals"] });
       toast.success(t("referral_updated"));
     },

@@ -44,6 +44,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Muted } from "@/components/ui/typography";
 
 import { FillSessionTabs } from "@/components/QuestionnaireV2/fill/FillSessionTabs";
+import { refreshNetworkTransaction } from "@/components/Referral/network/networkReferral";
 import { ReferralPatientHeader } from "@/components/Referral/ReferralPatientHeader";
 import { ReferralQuestionnaireAnswers } from "@/components/Referral/ReferralQuestionnaireAnswers";
 import { ReferralQuestionnaireForm } from "@/components/Referral/ReferralQuestionnaireForm";
@@ -248,6 +249,7 @@ export function ReferralResponseEditor({
     onMutate: () => onPending(true),
     onSettled: () => onPending(false),
     onSuccess: async () => {
+      refreshNetworkTransaction(client, referral.availability);
       await client.invalidateQueries({ queryKey: ["referrals"] });
       toast.success(t("referral_response_completed"));
       closeEditor();
@@ -260,6 +262,7 @@ export function ReferralResponseEditor({
     setResponseSaved(true);
     setUncertainAttempt(undefined);
     client.setQueryData(recoveryKey, null);
+    refreshNetworkTransaction(client, referral.availability);
     await client.invalidateQueries({ queryKey: ["referrals"] });
     if (shouldComplete && ["pending", "in_progress"].includes(status)) {
       // Once saved, retry only the status change; never post the reply twice.

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import FileUploadDialog from "@/components/Files/FileUploadDialog";
+import { refreshNetworkTransaction } from "@/components/Referral/network/networkReferral";
 import useFileUpload from "@/hooks/useFileUpload";
 import { ReferralRetrieve } from "@/types/emr/referral/referral";
 import {
@@ -67,6 +68,7 @@ export function ReferralUploadDialog({
     },
     onSuccess: (attachment) => {
       void invalidateReferralResources(queryClient, attachment);
+      refreshNetworkTransaction(queryClient, referral.availability);
       toast.success(t("referral_record_added"));
       onClose();
     },

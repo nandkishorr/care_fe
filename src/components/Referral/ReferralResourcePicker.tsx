@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
+import { refreshNetworkTransaction } from "@/components/Referral/network/networkReferral";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -208,6 +209,9 @@ export function ReferralResourcePicker({
         resource_type: resource.resource_type,
         resource_id: resource.resource_id,
       });
+      if (resource.resource_type === "file_upload") {
+        refreshNetworkTransaction(queryClient, referral.availability);
+      }
       toast.success(t("referral_record_added"));
       onClose();
     },
