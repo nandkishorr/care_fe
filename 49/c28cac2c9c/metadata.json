@@ -3,9 +3,14 @@
   "checkpoint_id": "49c28cac2c9c",
   "strategy": "manual-commit",
   "branch": "ccn-referral-new",
-  "checkpoints_count": 1,
+  "checkpoints_count": 5,
   "files_touched": [
-    "public/locale/en.json"
+    "public/locale/en.json",
+    "src/components/Referral/network/BecknTransactionStatusBadge.tsx",
+    "src/components/Referral/network/NetworkDestinationSearch.tsx",
+    "src/components/Referral/network/ReferralNetworkBadge.tsx",
+    "src/components/Referral/network/ReferralNetworkStatus.tsx",
+    "src/components/Referral/network/networkReferral.ts"
   ],
   "sessions": [
     {
@@ -14,13 +19,20 @@
       "compact_transcript": "/49/c28cac2c9c/0/transcript.jsonl",
       "content_hash": "/49/c28cac2c9c/0/content_hash.txt",
       "prompt": "/49/c28cac2c9c/0/prompt.txt"
+    },
+    {
+      "metadata": "/49/c28cac2c9c/1/metadata.json",
+      "transcript": "/49/c28cac2c9c/1/full.jsonl",
+      "compact_transcript": "/49/c28cac2c9c/1/transcript.jsonl",
+      "content_hash": "/49/c28cac2c9c/1/content_hash.txt",
+      "prompt": "/49/c28cac2c9c/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 348682,
-    "cache_creation_tokens": 59529,
-    "cache_read_tokens": 289139,
-    "output_tokens": 1756,
-    "api_call_count": 6
+    "input_tokens": 51112009,
+    "cache_creation_tokens": 1662890,
+    "cache_read_tokens": 49448649,
+    "output_tokens": 157398,
+    "api_call_count": 227
   }
 }
