@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "49c28cac2c9c",
+  "strategy": "manual-commit",
+  "branch": "ccn-referral-new",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "public/locale/en.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/49/c28cac2c9c/0/metadata.json",
+      "transcript": "/49/c28cac2c9c/0/full.jsonl",
+      "compact_transcript": "/49/c28cac2c9c/0/transcript.jsonl",
+      "content_hash": "/49/c28cac2c9c/0/content_hash.txt",
+      "prompt": "/49/c28cac2c9c/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 348682,
+    "cache_creation_tokens": 59529,
+    "cache_read_tokens": 289139,
+    "output_tokens": 1756,
+    "api_call_count": 6
+  }
+}
