@@ -20,6 +20,7 @@ import {
   FlaskConical,
   Link2,
   type LucideIcon,
+  Network,
   Plus,
   ShieldAlert,
   Stethoscope,
@@ -33,6 +34,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import FilePreviewDialog from "@/components/Common/FilePreviewDialog";
+import { useIsNetworkReferral } from "@/components/Referral/network/ReferralNetworkBadge";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -42,6 +44,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -108,11 +111,13 @@ function SharedRecordRow({
   attachment,
   resolved,
   canWrite,
+  isNetwork,
   onRemove,
 }: {
   attachment: ReferralResource;
   resolved: ResolvedReferralResourceState;
   canWrite: boolean;
+  isNetwork: boolean;
   onRemove: (trigger: HTMLButtonElement | null) => void;
 }) {
   const { t } = useTranslation();
@@ -125,6 +130,19 @@ function SharedRecordRow({
         t(`referral_resource_${attachment.resource_type}`)
       : t(`referral_resource_${attachment.resource_type}`);
   const isFile = attachment.resource_type === "file_upload";
+  // Only linked files are synced over the network; `ccn_ref` marks the copies
+  // the plugin received from the other side.
+  const networkBadge = attachment.metadata?.ccn_ref ? (
+    <Badge variant="info" size="sm" data-cy="referral-record-received">
+      <Network className="size-3" aria-hidden="true" />
+      {t("ccn_received_via_network")}
+    </Badge>
+  ) : isNetwork && isFile ? (
+    <Badge variant="neutral" size="sm" data-cy="referral-record-shared">
+      <Network className="size-3" aria-hidden="true" />
+      {t("ccn_shared_via_network")}
+    </Badge>
+  ) : null;
   const file =
     !resolved.isError && resolved.data?.resource_type === "file_upload"
       ? resolved.data.resource
@@ -225,10 +243,11 @@ function SharedRecordRow({
                 {fileName}
               </span>
             </ItemTitle>
-            <ItemDescription className="text-xs">
+            <ItemDescription className="flex flex-wrap items-center gap-2 text-xs">
               <time dateTime={fileDate}>
                 {formatDateTime(fileDate, "DD MMM YYYY")}
               </time>
+              {networkBadge}
             </ItemDescription>
           </ItemContent>
           <div className="flex shrink-0 gap-1">
@@ -280,11 +299,14 @@ function SharedRecordRow({
       )}
       {!isFile && (
         <footer className="flex items-center justify-between gap-3 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-          <time dateTime={attachment.created_date}>
-            {t("referral_attachment_date", {
-              date: formatDateTime(attachment.created_date),
-            })}
-          </time>
+          <div className="flex flex-wrap items-center gap-2">
+            <time dateTime={attachment.created_date}>
+              {t("referral_attachment_date", {
+                date: formatDateTime(attachment.created_date),
+              })}
+            </time>
+            {networkBadge}
+          </div>
           {actions}
         </footer>
       )}
@@ -378,6 +400,7 @@ export function ReferralSharedRecords({
   const queryClient = useQueryClient();
   const [action, setAction] = useState<"add" | "upload">();
   const [removing, setRemoving] = useState<ReferralResource>();
+  const isNetwork = useIsNetworkReferral(referral.availability);
   useEffect(() => {
     onDialogOpenChange?.(canWrite && (!!action || !!removing));
     return () => onDialogOpenChange?.(false);
@@ -524,6 +547,7 @@ export function ReferralSharedRecords({
             attachment={attachment}
             resolved={resolved.get(attachment.id)!}
             canWrite={canWrite}
+            isNetwork={isNetwork}
             onRemove={(trigger) => {
               removalTriggerRef.current = trigger;
               removalCompletedRef.current = false;

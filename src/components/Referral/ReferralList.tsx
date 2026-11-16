@@ -51,6 +51,7 @@ import {
 } from "@/components/Referral/ReferralFilters";
 
 import Pagination from "@/components/Common/Pagination";
+import { ReferralNetworkBadge } from "@/components/Referral/network/ReferralNetworkBadge";
 import { getReferralDetailUrl } from "@/components/Referral/referralNavigation";
 import { ReferralStatusBadge } from "@/components/Referral/ReferralStatusBadge";
 
@@ -314,6 +315,9 @@ export function ReferralList({
                         </ItemDescription>
                       </ItemContent>
                       <ItemActions>
+                        <ReferralNetworkBadge
+                          availabilityId={referral.availability}
+                        />
                         <ReferralStatusBadge status={referral.status} />
                       </ItemActions>
                     </Link>
@@ -352,7 +356,12 @@ export function ReferralList({
                       </TableCell>
                     )}
                     <TableCell>
-                      <ReferralStatusBadge status={referral.status} />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <ReferralStatusBadge status={referral.status} />
+                        <ReferralNetworkBadge
+                          availabilityId={referral.availability}
+                        />
+                      </div>
                     </TableCell>
                     <TableCell className="max-w-52 whitespace-normal text-muted-foreground">
                       {referral.assignees.length

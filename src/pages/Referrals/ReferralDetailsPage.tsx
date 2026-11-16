@@ -38,6 +38,8 @@ import {
   ReferralProgress,
   ReferralWorkflowActions,
 } from "@/components/Referral/ReferralWorkflowActions";
+import { ReferralNetworkBadge } from "@/components/Referral/network/ReferralNetworkBadge";
+import { ReferralNetworkStatus } from "@/components/Referral/network/ReferralNetworkStatus";
 import {
   getReferralDetailUrl,
   getReferralResponseUrl,
@@ -61,12 +63,14 @@ export function ReferralDetailsPage({ referralId }: { referralId: string }) {
       referralAppointmentId,
       referralEncounterId,
       referralFacilityId,
+      ccnTransactionId,
     },
   ] = useQueryParams<{
     sourceUrl?: string;
     referralAppointmentId?: string;
     referralEncounterId?: string;
     referralFacilityId?: string;
+    ccnTransactionId?: string;
   }>();
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["referrals", "detail", referralId],
@@ -217,7 +221,12 @@ export function ReferralDetailsPage({ referralId }: { referralId: string }) {
                           {data.title}
                         </h1>
                       </div>
-                      <ReferralStatusBadge status={data.status} />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <ReferralNetworkBadge
+                          availabilityId={data.availability}
+                        />
+                        <ReferralStatusBadge status={data.status} />
+                      </div>
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <ReferralProgress referral={data} />
@@ -399,8 +408,12 @@ export function ReferralDetailsPage({ referralId }: { referralId: string }) {
               </div>
               <aside
                 aria-label={t("notes__discussion")}
-                className="min-w-0 lg:sticky lg:top-4 lg:self-start"
+                className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start"
               >
+                <ReferralNetworkStatus
+                  referral={data}
+                  transactionId={ccnTransactionId || undefined}
+                />
                 <div id="referral-discussion">
                   <ReferralConversation referral={data} canWrite={canWrite} />
                 </div>
