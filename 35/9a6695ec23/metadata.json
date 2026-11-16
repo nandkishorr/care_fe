@@ -3,7 +3,7 @@
   "checkpoint_id": "359a6695ec23",
   "strategy": "manual-commit",
   "branch": "ccn-referral-new",
-  "checkpoints_count": 5,
+  "checkpoints_count": 7,
   "files_touched": [
     "src/Routers/routes/FacilityRoutes.tsx",
     "src/components/ui/sidebar/facility/facility-nav.tsx",
@@ -23,6 +23,13 @@
       "compact_transcript": "/35/9a6695ec23/1/transcript.jsonl",
       "content_hash": "/35/9a6695ec23/1/content_hash.txt",
       "prompt": "/35/9a6695ec23/1/prompt.txt"
+    },
+    {
+      "metadata": "/35/9a6695ec23/2/metadata.json",
+      "transcript": "/35/9a6695ec23/2/full.jsonl",
+      "compact_transcript": "/35/9a6695ec23/2/transcript.jsonl",
+      "content_hash": "/35/9a6695ec23/2/content_hash.txt",
+      "prompt": "/35/9a6695ec23/2/prompt.txt"
     }
   ],
   "token_usage": {
