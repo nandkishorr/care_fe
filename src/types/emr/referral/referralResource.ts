@@ -49,7 +49,12 @@ export interface ReferralResourceCreate {
   resource_type: ReferralResourceType;
   resource_id: string;
   attachment_type: ReferralResourceCategory;
-  metadata?: { facility_id?: string; facility_name?: string };
+  metadata?: {
+    facility_id?: string;
+    facility_name?: string;
+    /** Set by the CCN plugin on records received from the linked network referral. */
+    ccn_ref?: string;
+  };
 }
 
 export interface ReferralResource extends ReferralResourceCreate {
