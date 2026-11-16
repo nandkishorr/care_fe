@@ -279,6 +279,9 @@ function DestinationCombobox<T extends DestinationOption>({
 interface ReferralDestinationPickerProps {
   selected: ReferralAvailabilityRead | null;
   onSelect: (availability: ReferralAvailabilityRead) => void;
+  /** Renders the CCN network search; the "Network (CCN)" type is offered only when set. */
+  network?: ReactNode;
+  networkSelected?: boolean;
 }
 
 const DESTINATION_TYPES = [
@@ -288,6 +291,7 @@ const DESTINATION_TYPES = [
     value: "external_organization",
     label: "referral_destination_organization",
   },
+  { value: "external", label: "referral_destination_network" },
 ] as const;
 
 type DestinationType = (typeof DESTINATION_TYPES)[number]["value"];
@@ -295,14 +299,21 @@ type DestinationType = (typeof DESTINATION_TYPES)[number]["value"];
 export function ReferralDestinationPicker({
   selected,
   onSelect,
+  network,
+  networkSelected,
 }: ReferralDestinationPickerProps) {
   const { t } = useTranslation();
   const id = useId();
   const [entityType, setEntityType] = useState<DestinationType>(
-    selected?.entity_type === "internal_organization" ||
-      selected?.entity_type === "external_organization"
-      ? selected.entity_type
-      : "facility",
+    network && networkSelected
+      ? "external"
+      : selected?.entity_type === "internal_organization" ||
+          selected?.entity_type === "external_organization"
+        ? selected.entity_type
+        : "facility",
+  );
+  const destinationTypes = DESTINATION_TYPES.filter(
+    (type) => type.value !== "external" || !!network,
   );
 
   return (
@@ -317,7 +328,7 @@ export function ReferralDestinationPicker({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {DESTINATION_TYPES.map((type) => (
+            {destinationTypes.map((type) => (
               <SelectItem key={type.value} value={type.value}>
                 {t(type.label)}
               </SelectItem>
@@ -325,46 +336,50 @@ export function ReferralDestinationPicker({
           </SelectContent>
         </Select>
       </Field>
-      <DestinationCombobox
-        key={entityType}
-        label={t("referral_picker_unit")}
-        placeholder={t("referral_picker_select_unit")}
-        searchPlaceholder={t("referral_picker_search_units")}
-        emptyMessage={t("referral_picker_no_units")}
-        selected={selected?.entity_type === entityType ? selected : null}
-        onSelect={onSelect}
-        queryKey={["referrals", "destination-picker", "unit", entityType]}
-        fetchOptions={({ search, offset, signal }) =>
-          query.debounced(referralAvailabilityApi.list, {
-            queryParams: {
-              entity_type: entityType,
-              status: "active",
-              name: search || undefined,
-              ordering: "name",
-              limit: PAGE_SIZE,
-              offset,
-            },
-            silent: true,
-          })({ signal })
-        }
-        renderOption={(option) => (
-          <div className="flex min-w-0 flex-1 items-start justify-between gap-2">
-            <div className="min-w-0">
-              <span className="block break-words font-medium">
-                {option.name}
-              </span>
-              {option.description && (
-                <span className="block line-clamp-2 break-words text-xs text-muted-foreground">
-                  {option.description}
+      {entityType === "external" ? (
+        network
+      ) : (
+        <DestinationCombobox
+          key={entityType}
+          label={t("referral_picker_unit")}
+          placeholder={t("referral_picker_select_unit")}
+          searchPlaceholder={t("referral_picker_search_units")}
+          emptyMessage={t("referral_picker_no_units")}
+          selected={selected?.entity_type === entityType ? selected : null}
+          onSelect={onSelect}
+          queryKey={["referrals", "destination-picker", "unit", entityType]}
+          fetchOptions={({ search, offset, signal }) =>
+            query.debounced(referralAvailabilityApi.list, {
+              queryParams: {
+                entity_type: entityType,
+                status: "active",
+                name: search || undefined,
+                ordering: "name",
+                limit: PAGE_SIZE,
+                offset,
+              },
+              silent: true,
+            })({ signal })
+          }
+          renderOption={(option) => (
+            <div className="flex min-w-0 flex-1 items-start justify-between gap-2">
+              <div className="min-w-0">
+                <span className="block break-words font-medium">
+                  {option.name}
                 </span>
-              )}
+                {option.description && (
+                  <span className="block line-clamp-2 break-words text-xs text-muted-foreground">
+                    {option.description}
+                  </span>
+                )}
+              </div>
+              <Badge variant="neutral" size="xs" className="shrink-0">
+                {t(`referral_type_${option.referral_type}`)}
+              </Badge>
             </div>
-            <Badge variant="neutral" size="xs" className="shrink-0">
-              {t(`referral_type_${option.referral_type}`)}
-            </Badge>
-          </div>
-        )}
-      />
+          )}
+        />
+      )}
     </div>
   );
 }

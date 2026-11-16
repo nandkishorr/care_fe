@@ -1,5 +1,6 @@
 import { Spinner } from "@/components/ui/spinner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { TFunction } from "i18next";
 import { ArrowLeft, ArrowRight, Plus } from "lucide-react";
 import {
   CSSProperties,
@@ -14,6 +15,14 @@ import { toast } from "sonner";
 
 import { FillHeader } from "@/components/QuestionnaireV2/fill/FillHeader";
 import { FillSessionTabs } from "@/components/QuestionnaireV2/fill/FillSessionTabs";
+import { NetworkDestinationSearch } from "@/components/Referral/network/NetworkDestinationSearch";
+import {
+  networkErrorDetail,
+  NetworkReferralStep,
+  NetworkTransactionError,
+  submitNetworkReferral,
+} from "@/components/Referral/network/networkReferral";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -34,6 +43,12 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/context/PermissionContext";
 import { cn } from "@/lib/utils";
+import {
+  NetworkOffer,
+  networkOfferLabel,
+  REFERRAL_URGENCIES,
+  ReferralUrgency,
+} from "@/types/ccn/ccn";
 import { EncounterRead } from "@/types/emr/encounter/encounter";
 import patientApi from "@/types/emr/patient/patientApi";
 import {
@@ -41,12 +56,13 @@ import {
   ReferralCreate,
   ReferralQuestionnaireResult,
   ReferralRetrieve,
+  ReferralType,
 } from "@/types/emr/referral/referral";
 import referralApi, {
   referralAvailabilityApi,
 } from "@/types/emr/referral/referralApi";
 import mutate from "@/Utils/request/mutate";
-import query from "@/Utils/request/query";
+import query, { callApi } from "@/Utils/request/query";
 import { HTTPError } from "@/Utils/request/types";
 
 import { ReferralDestinationPicker } from "./ReferralDestinationPicker";
@@ -167,6 +183,44 @@ function AvailabilitySummary({
   );
 }
 
+function NetworkOfferSummary({
+  offer,
+  referralType,
+}: {
+  offer: NetworkOffer;
+  referralType: ReferralType;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-1">
+      <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+        {networkOfferLabel(offer)}
+        <Badge variant="info" size="xs">
+          {t("ccn_network")}
+        </Badge>
+      </p>
+      <p className="text-sm text-muted-foreground">
+        {t(`referral_type_${referralType}`)}
+        {offer.context.bpp_id && ` · ${offer.context.bpp_id}`}
+      </p>
+    </div>
+  );
+}
+
+function networkSendError(error: Error, t: TFunction) {
+  if (error instanceof NetworkTransactionError) {
+    return error.reason === "timeout"
+      ? t("ccn_network_timeout")
+      : t("ccn_network_request_failed", {
+          detail: networkErrorDetail(error) ?? error.transaction?.status,
+        });
+  }
+  if (error.message === "ccn_referral_not_created") {
+    return t("ccn_referral_not_created");
+  }
+  return referralResourceError(error, t("referral_create_failed"));
+}
+
 function CreateReferralContent({
   patientId,
   encounter,
@@ -195,6 +249,11 @@ function CreateReferralContent({
   const [reviewResults, setReviewResults] = useState<
     ReferralQuestionnaireResult[]
   >([]);
+  const [networkOffer, setNetworkOffer] = useState<NetworkOffer | null>(null);
+  const [networkReferralType, setNetworkReferralType] =
+    useState<ReferralType>("consultation");
+  const [urgency, setUrgency] = useState<ReferralUrgency>("routine");
+  const [networkStep, setNetworkStep] = useState<NetworkReferralStep>();
   const patientQuery = useQuery({
     queryKey: ["patient", patientId, facilityId],
     queryFn: query(patientApi.get, {
@@ -262,6 +321,53 @@ function CreateReferralContent({
       sendErrorRef.current?.focus({ preventScroll: true });
     }
   }, [createMutation.isError]);
+  const networkMutation = useMutation<ReferralRetrieve, Error, NetworkOffer>({
+    mutationFn: async (offer) => {
+      if (!facilityId) throw new Error("ccn_referral_not_created");
+      const transaction = await submitNetworkReferral(
+        {
+          offer,
+          facilityId,
+          patientId,
+          encounterId,
+          title: title.trim(),
+          reason: note.trim(),
+          referralType: networkReferralType,
+          urgency,
+        },
+        setNetworkStep,
+      );
+      if (!transaction.referral_id) {
+        throw new Error("ccn_referral_not_created");
+      }
+      return callApi(referralApi.get, {
+        pathParams: { referralId: transaction.referral_id },
+      });
+    },
+    retry: false,
+    onMutate: () => setIsPending(true),
+    onSettled: () => {
+      setIsPending(false);
+      setNetworkStep(undefined);
+    },
+    onSuccess: (referral) => {
+      void queryClient.invalidateQueries({ queryKey: ["referrals"] });
+      void queryClient.invalidateQueries({ queryKey: ["ccn"] });
+      toast.success(t("ccn_referral_sent"));
+      onCreated(referral);
+    },
+  });
+  useEffect(() => {
+    if (networkMutation.isError) {
+      sendErrorRef.current?.scrollIntoView({ block: "center" });
+      sendErrorRef.current?.focus({ preventScroll: true });
+    }
+  }, [networkMutation.isError]);
+  const sending = createMutation.isPending || networkMutation.isPending;
+  const resetSend = () => {
+    createMutation.reset();
+    networkMutation.reset();
+  };
   const moveTo = (next: "edit" | "review") => {
     setStep(next);
     requestAnimationFrame(() => {
@@ -275,20 +381,19 @@ function CreateReferralContent({
       !questionnaire ||
       !formReady ||
       !title.trim() ||
-      createMutation.isPending
+      sending
     )
       return;
     setReviewResults(results);
     moveTo("review");
   };
   const send = () => {
-    if (
-      !availability ||
-      !questionnaire ||
-      createMutation.isPending ||
-      step !== "review"
-    )
+    if (sending || step !== "review") return;
+    if (networkOffer) {
+      networkMutation.mutate(networkOffer);
       return;
+    }
+    if (!availability || !questionnaire) return;
     createMutation.mutate({
       availability: availability.id,
       patient: patientId,
@@ -332,7 +437,7 @@ function CreateReferralContent({
             hasPermission("can_view_clinical_data", chartPatient.permissions),
         }}
         onClose={onCancel}
-        exitDisabled={createMutation.isPending}
+        exitDisabled={sending}
       >
         <div
           ref={scrollRef}
@@ -356,7 +461,7 @@ function CreateReferralContent({
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={createMutation.isPending}
+                  disabled={sending}
                   onClick={() => {
                     if (step === "edit") onCancel();
                     else moveTo("edit");
@@ -365,7 +470,16 @@ function CreateReferralContent({
                   {step === "review" && <ArrowLeft className="size-4" />}
                   {t(step === "review" ? "referral_back_to_editing" : "cancel")}
                 </Button>
-                {step === "edit" ? (
+                {step === "edit" && networkOffer ? (
+                  <Button
+                    type="button"
+                    disabled={!title.trim()}
+                    onClick={() => moveTo("review")}
+                  >
+                    {t("referral_review")}
+                    <ArrowRight className="size-4" />
+                  </Button>
+                ) : step === "edit" ? (
                   <Button
                     type="submit"
                     form={formId}
@@ -382,18 +496,14 @@ function CreateReferralContent({
                     <ArrowRight className="size-4" />
                   </Button>
                 ) : (
-                  <Button
-                    type="button"
-                    disabled={createMutation.isPending}
-                    onClick={send}
-                  >
-                    {createMutation.isPending && (
-                      <Spinner className="size-4 animate-spin" />
-                    )}
+                  <Button type="button" disabled={sending} onClick={send}>
+                    {sending && <Spinner className="size-4 animate-spin" />}
                     {t(
-                      createMutation.isPending
-                        ? "referral_sending"
-                        : "referral_send",
+                      networkStep
+                        ? `ccn_sending_${networkStep}`
+                        : sending
+                          ? "referral_sending"
+                          : "referral_send",
                     )}
                     <ArrowRight className="size-4" />
                   </Button>
@@ -429,15 +539,24 @@ function CreateReferralContent({
             </div>
             <div className="space-y-6" hidden={step !== "edit"}>
               <CreationSection title={t("referral_destination")} number={1}>
-                {availability && (
+                {(availability || networkOffer) && (
                   <div className="space-y-3">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <p className="text-sm font-semibold">
-                          {availability.name}
-                        </p>
-                        <AvailabilitySummary availability={availability} />
-                      </div>
+                      {networkOffer ? (
+                        <NetworkOfferSummary
+                          offer={networkOffer}
+                          referralType={networkReferralType}
+                        />
+                      ) : (
+                        availability && (
+                          <div className="space-y-1">
+                            <p className="text-sm font-semibold">
+                              {availability.name}
+                            </p>
+                            <AvailabilitySummary availability={availability} />
+                          </div>
+                        )
+                      )}
                       <Button
                         type="button"
                         size="sm"
@@ -453,7 +572,7 @@ function CreateReferralContent({
                         )}
                       </Button>
                     </div>
-                    {!choosingDestination && availability.description && (
+                    {!choosingDestination && availability?.description && (
                       <p className="text-sm text-muted-foreground">
                         {availability.description}
                       </p>
@@ -466,12 +585,36 @@ function CreateReferralContent({
                     onSelect={(item) => {
                       if (availability?.id !== item.id) {
                         setAvailability(item);
+                        setNetworkOffer(null);
                         setQuestionnaireId("");
                         setTitle(item.name);
-                        createMutation.reset();
+                        resetSend();
                       }
                       setChoosingDestination(false);
                     }}
+                    networkSelected={!!networkOffer}
+                    network={
+                      facilityId ? (
+                        <NetworkDestinationSearch
+                          referralType={networkReferralType}
+                          onReferralTypeChange={(referralType) => {
+                            setNetworkReferralType(referralType);
+                            setNetworkOffer(null);
+                          }}
+                          selected={networkOffer}
+                          onSelect={(offer) => {
+                            setNetworkOffer(offer);
+                            setAvailability(null);
+                            setFormReady(false);
+                            if (!title.trim() || availability) {
+                              setTitle(networkOfferLabel(offer));
+                            }
+                            resetSend();
+                            setChoosingDestination(false);
+                          }}
+                        />
+                      ) : undefined
+                    }
                   />
                 )}
               </CreationSection>
@@ -503,6 +646,36 @@ function CreateReferralContent({
                   />
                 </Field>
               </CreationSection>
+              {networkOffer && (
+                <CreationSection title={t("ccn_network_details")} number={3}>
+                  <Field className="max-w-xs">
+                    <FieldLabel htmlFor={`${formId}-urgency`}>
+                      {t("ccn_urgency")}
+                    </FieldLabel>
+                    <Select
+                      value={urgency}
+                      onValueChange={(value: ReferralUrgency) => {
+                        setUrgency(value);
+                        resetSend();
+                      }}
+                    >
+                      <SelectTrigger id={`${formId}-urgency`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {REFERRAL_URGENCIES.map((item) => (
+                          <SelectItem key={item} value={item}>
+                            {t(`ccn_urgency__${item}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <p className="text-sm text-muted-foreground">
+                    {t("ccn_network_referral_description")}
+                  </p>
+                </CreationSection>
+              )}
               {availability && (
                 <CreationSection
                   title={t("referral_service_questions")}
@@ -551,7 +724,7 @@ function CreateReferralContent({
                             value={questionnaire.id}
                             onValueChange={(value) => {
                               setQuestionnaireId(value);
-                              createMutation.reset();
+                              resetSend();
                             }}
                           >
                             <SelectTrigger id={`${formId}-questionnaire`}>
@@ -574,7 +747,7 @@ function CreateReferralContent({
                         encounterId={encounterId}
                         facilityId={facilityId}
                         formId={formId}
-                        disabled={step === "review" || createMutation.isPending}
+                        disabled={step === "review" || sending}
                         onSubmit={review}
                         onReadyChange={setFormReady}
                       />
@@ -583,6 +756,30 @@ function CreateReferralContent({
                 </CreationSection>
               )}
             </div>
+            {step === "review" && networkOffer && (
+              <div className="space-y-6">
+                <CreationSection title={t("referral_destination")}>
+                  <NetworkOfferSummary
+                    offer={networkOffer}
+                    referralType={networkReferralType}
+                  />
+                </CreationSection>
+                <CreationSection title={t("referral_reason")}>
+                  <p className="text-base font-semibold">{title}</p>
+                  {note && (
+                    <p className="whitespace-pre-wrap text-sm">{note}</p>
+                  )}
+                </CreationSection>
+                <CreationSection title={t("ccn_network_details")}>
+                  <p className="text-sm">
+                    {t("ccn_urgency")}: {t(`ccn_urgency__${urgency}`)}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {t("ccn_network_referral_description")}
+                  </p>
+                </CreationSection>
+              </div>
+            )}
             {step === "review" && availability && questionnaire && (
               <div className="space-y-6">
                 <CreationSection title={t("referral_destination")}>
@@ -611,7 +808,7 @@ function CreateReferralContent({
                 </CreationSection>
               </div>
             )}
-            {createMutation.isError && (
+            {(createMutation.isError || networkMutation.isError) && (
               <div
                 ref={sendErrorRef}
                 role="alert"
@@ -619,10 +816,12 @@ function CreateReferralContent({
                 className="space-y-2 rounded-lg border border-destructive/30 p-4 outline-none"
               >
                 <FieldError role={undefined}>
-                  {referralResourceError(
-                    createMutation.error,
-                    t("referral_create_failed"),
-                  )}
+                  {networkMutation.error
+                    ? networkSendError(networkMutation.error, t)
+                    : referralResourceError(
+                        createMutation.error,
+                        t("referral_create_failed"),
+                      )}
                 </FieldError>
                 {unknownDelivery && (
                   <p className="text-sm text-muted-foreground">
