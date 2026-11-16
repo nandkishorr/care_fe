@@ -91,6 +91,12 @@ function generateFacilityLinks(
       visibility: permissions.canReadReferral,
     },
     {
+      name: t("ccn_network_referrals"),
+      url: `${baseUrl}/network_referrals`,
+      icon: <FacilitySidebarIcon name="referrals" />,
+      visibility: permissions.canReadReferral,
+    },
+    {
       name: t("resource"),
       url: `${baseUrl}/resource`,
       icon: <FacilitySidebarIcon name="resources" />,

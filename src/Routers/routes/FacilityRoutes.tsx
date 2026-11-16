@@ -1,4 +1,5 @@
 import FacilityReferrals from "@/pages/Facility/referrals/FacilityReferrals";
+import NetworkReferrals from "@/pages/Facility/referrals/NetworkReferrals";
 import { Redirect } from "raviger";
 
 import FacilityUsers from "@/components/Facility/FacilityUsers";
@@ -34,6 +35,9 @@ import { SettingsLayout } from "@/pages/Facility/settings/layout";
 const FacilityRoutes: AppRoutes = {
   "/facility/:facilityId/referrals": ({ facilityId }) => (
     <FacilityReferrals facilityId={facilityId} />
+  ),
+  "/facility/:facilityId/network_referrals": ({ facilityId }) => (
+    <NetworkReferrals facilityId={facilityId} />
   ),
   "/facility": () => <Redirect to="/" />,
   "/facility/:facilityId/overview": ({ facilityId }) => (
