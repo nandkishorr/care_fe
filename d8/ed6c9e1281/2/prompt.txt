@@ -1,0 +1,170 @@
+Inspect care_fe CCN referral UI
+
+Read 
+
+Read 
+
+Read 
+
+Read memory 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+No matches found. Your search pattern might be excluded completely by either the search.exclude settings or .*ignore files.
+If you believe that it should have results, you can check into the .*ignore files and the exclude setting (here are some excluded patterns for reference:[**/node_modules,**/bower_components,**/*.code-search]).
+Then if you want to include those files you can call the tool again by setting "includeIgnoredFiles" to true.
+
+No matches found. Your search pattern might be excluded completely by either the search.exclude settings or .*ignore files.
+If you believe that it should have results, you can check into the .*ignore files and the exclude setting (here are some excluded patterns for reference:[**/node_modules,**/bower_components,**/*.code-search]).
+Then if you want to include those files you can call the tool again by setting "includeIgnoredFiles" to true.
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+Read 
+
+No frontend change is needed for the sync itself: the 3.1/base screens (upload dialog, Respond editor, Responses section, shared records) already call the CARE APIs that trigger it. The prompt below covers the small display additions that are worth making, plus running two frontends against your two backends.
+
+Two backend limits that affect the frontend:
+- Shared-record links return `metadata`, so the UI can tell which files came from the other instance (`metadata.ccn_ref`).
+- Form responses don't return `meta`, so the UI can't tell which responses came from the other instance. Copied responses show `created_by` as the system user. To label them, the backend first needs a small change to return `meta`; the prompt doesn't depend on it.
+
+Paste this into the frontend agent:
+
+````markdown
+# Task: CCN referral two-way sync — care_fe support (base branch `3.1/base`)
+
+## Context
+The backend plugin `care_ccn_be` now keeps the two linked referrals of a network referral in step.
+- One referral is on the referring instance (BAP, "origin"). The other is on the receiving instance (BPP, "assigned").
+- Sync is triggered automatically by the existing CARE APIs. The FE must NOT call any new sync endpoint.
+- Referring side → receiving side: files linked with `POST /api/v1/referral/{id}/resources/` (`resource_type: "file_upload"`, any `attachment_type`), and form answers posted with `POST /api/v1/referral/{id}/questionnaire_responses/`. Both are sent as a Beckn `update` after the network confirm.
+- Receiving side → referring side: its `response` files, response forms and status changes (`PATCH /api/v1/referral/{id}/` with `status`) are sent back as an `on_update`. The referring referral's status only moves forward and is never reopened.
+- Items received from the other side are stored as normal CARE rows:
+  - A received file is a `FileUpload` (`file_type: "referral"`) plus a `ReferralResource`. Its `metadata` is `{ "ccn_ref": "file-<uuid>" }`, and its `attachment_type` matches the sender's category (`source` / `metadata` / `response`).
+  - A received form answer is a `ReferralQuestionnaireResponse`. It has the sender's `questionnaire_snapshot` and `questionnaire_type` (`request` / `response`), and `created_by` is the plugin's system user. Render it from `questionnaire_snapshot`, as today.
+- The BAP transaction retrieve (`GET /api/care_ccn_be/bap/referral/{transactionId}/`) can now include the actions `UPDATE` and `ON_UPDATE`, and the transaction status can be `UPDATE` or `ON_UPDATE`.
+
+## Do
+1. Rebase or port the CCN network UI from branch `ccn-referral-new` onto `3.1/base` if it's missing:
+   - `src/types/ccn/*`
+   - `src/components/Referral/network/*`
+   - the `ReferralNetworkBadge` / `ReferralNetworkStatus` usage in `ReferralDetailsPage`
+   - the `ccn_*` keys in `public/locale/en.json`
+2. Mark received records:
+   - Add `ccn_ref?: string` to the referral resource `metadata` type (`src/types/emr/referral/referralResource.ts`).
+   - In `ReferralSharedRecords.tsx`, show a small "Received via network" badge on any record whose `metadata.ccn_ref` is set. Use i18n key `ccn_received_via_network`.
+   - Records without `ccn_ref` on a network referral may show "Shared via network" (`ccn_shared_via_network`). Only do this when the referral's availability is external (the existing `ReferralNetworkBadge` condition).
+3. Network activity:
+   - In `ReferralNetworkStatus.tsx`, render the action labels `UPDATE` → "Update sent" and `ON_UPDATE` → "Update received". Use i18n keys `ccn_action__update` and `ccn_action__on_update`, and fall back to the raw action for anything else.
+   - Make sure `BecknTransactionStatusBadge` groups `UPDATE` as awaiting and `ON_UPDATE` as responded. This already happens through the generic rules; just verify it.
+4. Refresh after edits on a network referral:
+   - After a successful file link, response post, or status PATCH on a referral with an external availability, invalidate `["ccn", "referral", "transaction", transactionId]` as well as `["referrals"]`. That way the network panel shows the new UPDATE / ON_UPDATE.
+   - Use the same `transactionId` resolution as `ReferralNetworkStatus`: the `ccnTransactionId` search parameter, or `referral.id`.
+5. Add all new strings to `public/locale/en.json` only. Other locales stay untouched.
+
+## Don't
+- Don't add any FE call to `/bap/referral/{id}/update/`. Sync is backend-driven.
+- Don't change the upload flow, the Respond editor submit logic, or the status-change logic.
+- Don't try to detect received form responses from fields the API doesn't return. `meta` is not part of the response read spec.
+
+## Run two instances locally (build + point)
+- Instance A (referring): `PORT=4000 REACT_CARE_API_URL=http://localhost:9000 npm run dev`
+- Instance B (receiving): `PORT=4001 REACT_CARE_API_URL=http://localhost:9001 npm run dev`
+- `.env.local` currently sets `REACT_CARE_API_URL=http://localhost:8000`. Values set in the shell take priority in Vite. If they don't, use per-instance `.env.local` copies, or set `REACT_CARE_URL_MAP` in `care.config.ts`.
+- Production build check: `npm run build` must pass with no type errors. Also run `npm run lint`.
+
+## Manual check
+1. On A, create a network referral and fill in the request form. On B's referral, the request answers appear in the request tab.
+2. On A, upload a file in shared records (`source`). On B, it appears with the "Received via network" badge, and the preview opens.
+3. On B, use Respond: attach a `response` file, then "Save & complete".
+4. On A:
+   - The Responses section shows the answers and the response file, with the badge on the file.
+   - The status is `completed`.
+   - The network panel shows `… → UPDATE → ON_UPDATE`.
+````
+
+---
+
+currently ihavnt added a repo for ngnix but now now i just need you to setup nixos configureration and reboot it to setup
+
+---
+
+fe cant upload the pdf or pics now and showing error but be getting 200
