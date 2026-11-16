@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "359a6695ec23",
+  "strategy": "manual-commit",
+  "branch": "ccn-referral-new",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/Routers/routes/FacilityRoutes.tsx",
+    "src/components/ui/sidebar/facility/facility-nav.tsx"
+  ],
+  "sessions": [
+    {
+      "metadata": "/35/9a6695ec23/0/metadata.json",
+      "transcript": "/35/9a6695ec23/0/full.jsonl",
+      "compact_transcript": "/35/9a6695ec23/0/transcript.jsonl",
+      "content_hash": "/35/9a6695ec23/0/content_hash.txt",
+      "prompt": "/35/9a6695ec23/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 348682,
+    "cache_creation_tokens": 59529,
+    "cache_read_tokens": 289139,
+    "output_tokens": 1756,
+    "api_call_count": 6
+  }
+}

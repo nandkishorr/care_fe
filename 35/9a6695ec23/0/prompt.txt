@@ -1,0 +1,11 @@
+```
+    "message": {
+        "intent": {
+            "filters": {
+                "type": "jsonpath",
+                "expression": "$.catalogs[*].resources[*] ? (@.resourceAttributes.healthServiceType == \"PHYSICAL_CONSULTATION\" && @.resourceAttributes.acceptanceMode == \"MANUAL_REVIEW\")"
+            }
+        }
+    }
+}
+``` only need the pysical consulatation no annd operations
