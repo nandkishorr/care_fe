@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "f5cd42902ae2",
+  "strategy": "manual-commit",
+  "branch": "ccn-referral-new",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "src/components/Referral/ReferralResourcePicker.tsx",
+    "src/components/Referral/ReferralResponseEditor.tsx",
+    "src/components/Referral/ReferralUploadDialog.tsx",
+    "src/components/Referral/ReferralWorkflowActions.tsx"
+  ],
+  "sessions": [
+    {
+      "metadata": "/f5/cd42902ae2/0/metadata.json",
+      "transcript": "/f5/cd42902ae2/0/full.jsonl",
+      "compact_transcript": "/f5/cd42902ae2/0/transcript.jsonl",
+      "content_hash": "/f5/cd42902ae2/0/content_hash.txt",
+      "prompt": "/f5/cd42902ae2/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 5285768,
+    "cache_creation_tokens": 1011506,
+    "cache_read_tokens": 4274160,
+    "output_tokens": 28921,
+    "api_call_count": 48
+  }
+}
