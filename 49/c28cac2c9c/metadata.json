@@ -3,7 +3,7 @@
   "checkpoint_id": "49c28cac2c9c",
   "strategy": "manual-commit",
   "branch": "ccn-referral-new",
-  "checkpoints_count": 5,
+  "checkpoints_count": 7,
   "files_touched": [
     "public/locale/en.json",
     "src/components/Referral/network/BecknTransactionStatusBadge.tsx",
@@ -26,13 +26,20 @@
       "compact_transcript": "/49/c28cac2c9c/1/transcript.jsonl",
       "content_hash": "/49/c28cac2c9c/1/content_hash.txt",
       "prompt": "/49/c28cac2c9c/1/prompt.txt"
+    },
+    {
+      "metadata": "/49/c28cac2c9c/2/metadata.json",
+      "transcript": "/49/c28cac2c9c/2/full.jsonl",
+      "compact_transcript": "/49/c28cac2c9c/2/transcript.jsonl",
+      "content_hash": "/49/c28cac2c9c/2/content_hash.txt",
+      "prompt": "/49/c28cac2c9c/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 51112009,
-    "cache_creation_tokens": 1662890,
-    "cache_read_tokens": 49448649,
-    "output_tokens": 157398,
-    "api_call_count": 227
+    "input_tokens": 56397777,
+    "cache_creation_tokens": 2674396,
+    "cache_read_tokens": 53722809,
+    "output_tokens": 186319,
+    "api_call_count": 275
   }
 }
