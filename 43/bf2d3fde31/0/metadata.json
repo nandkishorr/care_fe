@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "43bf2d3fde31",
+  "session_id": "88fa5e52-85de-4b77-8bf8-6d1ed6427a0c",
+  "strategy": "manual-commit",
+  "created_at": "2026-11-18T07:06:13.157027Z",
+  "branch": "ccn-referral-new",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "tests/facility/referrals/referral-network.spec.ts"
+  ],
+  "agent": "Copilot CLI",
+  "model": "claude-opus-5.5",
+  "turn_id": "734ba1e94f99",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-11-18T07:06:13.106079Z",
+    "agent_lines": 125,
+    "agent_removed": 9,
+    "human_added": 2,
+    "human_modified": 4,
+    "human_removed": 0,
+    "total_committed": 131,
+    "total_lines_changed": 140,
+    "agent_percentage": 95.71428571428572,
+    "metric_version": 2
+  }
+}
