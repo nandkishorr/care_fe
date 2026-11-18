@@ -1,5 +1,10 @@
 import { faker } from "@faker-js/faker";
 import { expect, type Page, test } from "@playwright/test";
+import {
+  adminApiHeaders,
+  apiBaseUrl,
+  questionBlock,
+} from "tests/helper/questionnaireV2";
 import { createReferralFixture } from "tests/helper/referrals";
 
 test.use({ storageState: "tests/.auth/user.json" });
@@ -78,7 +83,28 @@ test("sends a referral through the CCN network and shows its network status", as
   const transactionId = faker.string.uuid();
   const offerName = `Network desk ${fixture.suffix}`;
   const title = `Network referral ${fixture.suffix}`;
+  const answer = `Network assessment ${fixture.suffix}`;
+  // The receiving instance's request form, as the BPP snapshots it on `on_select`.
+  const requestForm = await (
+    await request.get(
+      `${apiBaseUrl()}/api/v1/questionnaire/${fixture.requestFormId}/`,
+      { headers: adminApiHeaders() },
+    )
+  ).json();
+  const availability = {
+    id: fixture.availabilityId,
+    name: fixture.availabilityName,
+    description: "Network referral unit",
+    referral_type: "consultation",
+    facility_id: fixture.facilityId,
+    facility_name: offerName,
+    questionnaires: [
+      { questionnaire_type: "request", questionnaire: requestForm },
+    ],
+  };
+  let discoverBody: Record<string, unknown> | undefined;
   let selectBody: Record<string, unknown> | undefined;
+  let initBody: Record<string, unknown> | undefined;
   let confirmBody: Record<string, unknown> | undefined;
   let status = "ON_DISCOVER";
 
@@ -99,12 +125,18 @@ test("sends a referral through the CCN network and shows its network status", as
         ),
       );
     if (url.pathname.endsWith("/bap/referral/discover/")) {
+      discoverBody = route.request().postDataJSON();
       return accepted("discover");
     }
     if (url.pathname.endsWith(`/bap/referral/${transactionId}/select/`)) {
       selectBody = route.request().postDataJSON();
       status = "ON_SELECT";
       return accepted("select");
+    }
+    if (url.pathname.endsWith(`/bap/referral/${transactionId}/init/`)) {
+      initBody = route.request().postDataJSON();
+      status = "ON_INIT";
+      return accepted("init");
     }
     if (url.pathname.endsWith(`/bap/referral/${transactionId}/confirm/`)) {
       confirmBody = route.request().postDataJSON();
@@ -116,6 +148,7 @@ test("sends a referral through the CCN network and shows its network status", as
         json(
           transaction(transactionId, status, {
             referral_id: status === "ON_CONFIRM" ? fixture.referralId : null,
+            availability: status === "ON_DISCOVER" ? null : availability,
           }),
         ),
       );
@@ -151,15 +184,74 @@ test("sends a referral through the CCN network and shows its network status", as
                 },
                 message: {
                   catalogs: [
+                    // Appointment catalogs answer the same discover; they
+                    // cannot be referred to and must not be listed.
                     {
+                      id: `catalog-${fixture.facilityId}`,
                       provider: {
                         id: fixture.facilityId,
                         descriptor: { name: offerName },
                       },
+                      resources: [
+                        {
+                          id: "practitioner-1",
+                          resourceAttributes: { "@type": "hr:HealthResource" },
+                        },
+                      ],
                       offers: [
                         {
-                          id: "offer-1",
+                          id: "offer-practitioner-1",
+                          resourceIds: ["practitioner-1"],
+                          descriptor: { name: "Appointment - Dr. Network" },
+                        },
+                      ],
+                    },
+                    {
+                      id: `catalog-referral-${fixture.facilityId}`,
+                      provider: {
+                        id: fixture.facilityId,
+                        descriptor: { name: offerName },
+                      },
+                      resources: [
+                        {
+                          id: fixture.availabilityId,
+                          resourceAttributes: {
+                            "@type": "scres:ServiceCoordinationResource",
+                            referralAvailability: {
+                              id: fixture.availabilityId,
+                              referralType: "consultation",
+                              entityType: "facility",
+                            },
+                          },
+                        },
+                      ],
+                      offers: [
+                        {
+                          id: `offer-${fixture.availabilityId}`,
+                          resourceIds: [fixture.availabilityId],
                           descriptor: { name: "Consultation" },
+                        },
+                      ],
+                    },
+                    {
+                      id: `catalog-coordinator-${fixture.facilityId}`,
+                      provider: {
+                        id: fixture.facilityId,
+                        descriptor: { name: offerName },
+                      },
+                      resources: [
+                        {
+                          id: `desk-${fixture.facilityId}`,
+                          resourceAttributes: {
+                            "@type": "scres:ServiceCoordinationResource",
+                          },
+                        },
+                      ],
+                      offers: [
+                        {
+                          id: `coordinator-${fixture.facilityId}-offer`,
+                          resourceIds: [`desk-${fixture.facilityId}`],
+                          descriptor: { name: "Coordination desk" },
                         },
                       ],
                     },
@@ -181,29 +273,46 @@ test("sends a referral through the CCN network and shows its network status", as
     await page.getByRole("button", { name: "New Referral" }).click();
     await page.getByRole("combobox", { name: "Refer to" }).click();
     await page.getByRole("option", { name: "Network (CCN)" }).click();
+    await page.getByRole("radio", { name: new RegExp(offerName) }).click();
+    await page.getByRole("combobox", { name: "Referral service" }).click();
+    await expect(page.getByRole("option")).toHaveCount(2);
+    await expect(page.getByRole("option", { name: /Appointment/ })).toHaveCount(
+      0,
+    );
     await page
-      .getByRole("radio", { name: new RegExp(`${offerName} — Consultation`) })
+      .getByRole("option", { name: /Consultation.*Referral unit/ })
       .click();
     await expect(
       page.getByRole("region", { name: "Destination" }),
-    ).toContainText(offerName);
+    ).toContainText(`${offerName} — Consultation`);
+    await expect(
+      page.getByRole("textbox", { name: "Referral title" }),
+    ).toHaveValue(`${offerName} — Consultation`);
   });
 
-  await test.step("Review and send the network referral", async () => {
+  await test.step("Fill the receiving facility's request form, review and send", async () => {
     await page.getByRole("textbox", { name: "Referral title" }).fill(title);
     await page.getByRole("combobox", { name: "Urgency" }).click();
     await page.getByRole("option", { name: "Urgent" }).click();
+    await questionBlock(page, "Referral reason")
+      .getByRole("textbox")
+      .fill(answer);
     await page.getByRole("button", { name: "Review referral" }).click();
     await expect(page.getByText("Urgency: Urgent")).toBeVisible();
+    await expect(
+      page.getByText(answer, { exact: true }).filter({ visible: true }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Send referral" }).click();
     await expect(
       page.getByText("Referral sent through the CCN network"),
     ).toBeVisible();
   });
 
-  await test.step("The plugin received the full routing and request", async () => {
+  await test.step("The plugin received the full routing, request and form", async () => {
+    // Referral resources have no service type: discover is not narrowed by one.
+    expect(discoverBody).toEqual({});
     expect(selectBody).toMatchObject({
-      offer_id: "offer-1",
+      offer_id: `offer-${fixture.availabilityId}`,
       context: {
         network_id: "nfh",
         bap_id: "care.bap",
@@ -216,12 +325,23 @@ test("sends a referral through the CCN network and shows its network status", as
       facility: fixture.facilityId,
       patient: fixture.patientId,
       title,
-      category: "patient_care",
-      offer_id: "offer-1",
-      assigned_facility_id: fixture.facilityId,
       emergency: false,
       priority: 2,
+      questionnaire: fixture.requestFormId,
+      questionnaire_response: {
+        results: [
+          {
+            question_id: fixture.requestQuestionId,
+            values: [{ value: answer }],
+          },
+        ],
+      },
     });
+    // The plugin defaults these from the selected offer and availability.
+    for (const key of ["offer_id", "assigned_facility_id", "category"]) {
+      expect(confirmBody).not.toHaveProperty(key);
+    }
+    expect(initBody).toEqual(confirmBody);
   });
 
   await test.step("Network referrals are marked in the list and details", async () => {
