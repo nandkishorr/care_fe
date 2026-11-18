@@ -15,11 +15,17 @@ import { toast } from "sonner";
 
 import { FillHeader } from "@/components/QuestionnaireV2/fill/FillHeader";
 import { FillSessionTabs } from "@/components/QuestionnaireV2/fill/FillSessionTabs";
-import { NetworkDestinationSearch } from "@/components/Referral/network/NetworkDestinationSearch";
 import {
+  NetworkDestinationSearch,
+  NetworkOfferKindBadge,
+} from "@/components/Referral/network/NetworkDestinationSearch";
+import {
+  networkBecknError,
   networkErrorDetail,
+  NetworkReferralRequest,
   NetworkReferralStep,
   NetworkTransactionError,
+  selectNetworkOffer,
   submitNetworkReferral,
 } from "@/components/Referral/network/networkReferral";
 import { Badge } from "@/components/ui/badge";
@@ -44,9 +50,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { usePermissions } from "@/context/PermissionContext";
 import { cn } from "@/lib/utils";
 import {
+  isSameNetworkOffer,
   NetworkOffer,
   networkOfferLabel,
+  networkOfferReferralType,
+  NetworkReferralAvailability,
+  networkRequestForms,
+  REFERRAL_ERROR_CODES,
   REFERRAL_URGENCIES,
+  ReferralTransactionRetrieve,
   ReferralUrgency,
 } from "@/types/ccn/ccn";
 import { EncounterRead } from "@/types/emr/encounter/encounter";
@@ -186,9 +198,11 @@ function AvailabilitySummary({
 function NetworkOfferSummary({
   offer,
   referralType,
+  availability,
 }: {
   offer: NetworkOffer;
-  referralType: ReferralType;
+  referralType?: ReferralType;
+  availability?: NetworkReferralAvailability | null;
 }) {
   const { t } = useTranslation();
   return (
@@ -198,16 +212,48 @@ function NetworkOfferSummary({
         <Badge variant="info" size="xs">
           {t("ccn_network")}
         </Badge>
+        <NetworkOfferKindBadge kind={offer.kind} />
       </p>
       <p className="text-sm text-muted-foreground">
-        {t(`referral_type_${referralType}`)}
-        {offer.context.bpp_id && ` · ${offer.context.bpp_id}`}
+        {[
+          referralType && t(`referral_type_${referralType}`),
+          offer.organizationName,
+          offer.context.bpp_id,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
       </p>
+      {availability?.description && (
+        <p className="text-sm text-muted-foreground">
+          {availability.description}
+        </p>
+      )}
     </div>
   );
 }
 
+/** A rejected form that is not about specific answers means the remote form changed. */
+function isStaleNetworkForm(error: Error | null) {
+  const becknError = error ? networkBecknError(error) : undefined;
+  return (
+    becknError?.code === REFERRAL_ERROR_CODES.formInvalid &&
+    !becknError.paths?.length
+  );
+}
+
 function networkSendError(error: Error, t: TFunction) {
+  const becknError = networkBecknError(error);
+  const detail = becknError?.message;
+  switch (becknError?.code) {
+    case REFERRAL_ERROR_CODES.unavailable:
+      return t("ccn_referral_error_unavailable");
+    case REFERRAL_ERROR_CODES.formRequired:
+      return t("ccn_referral_error_form_required");
+    case REFERRAL_ERROR_CODES.formInvalid:
+      return becknError.paths?.length
+        ? t("ccn_referral_error_form_invalid", { detail })
+        : t("ccn_referral_error_form_changed", { detail });
+  }
   if (error instanceof NetworkTransactionError) {
     return error.reason === "timeout"
       ? t("ccn_network_timeout")
@@ -250,8 +296,10 @@ function CreateReferralContent({
     ReferralQuestionnaireResult[]
   >([]);
   const [networkOffer, setNetworkOffer] = useState<NetworkOffer | null>(null);
-  const [networkReferralType, setNetworkReferralType] =
-    useState<ReferralType>("consultation");
+  const [networkQuestionnaireId, setNetworkQuestionnaireId] = useState("");
+  // Bumped to search the network again, e.g. when a provider stops accepting referrals.
+  const [rediscoverKey, setRediscoverKey] = useState(0);
+  const [destinationError, setDestinationError] = useState<string>();
   const [urgency, setUrgency] = useState<ReferralUrgency>("routine");
   const [networkStep, setNetworkStep] = useState<NetworkReferralStep>();
   const patientQuery = useQuery({
@@ -304,6 +352,61 @@ function CreateReferralContent({
     : questionnaires[0];
   const unsupported =
     questionnaire && hasUnsupportedReferralQuestions(questionnaire.questions);
+  // A network offer is selected as soon as it is picked: `on_select` returns
+  // the receiving availability and the request forms to fill before sending.
+  const selectAbortRef = useRef<AbortController | null>(null);
+  const selectMutation = useMutation<
+    ReferralTransactionRetrieve,
+    Error,
+    NetworkOffer
+  >({
+    mutationFn: (offer) => {
+      selectAbortRef.current?.abort();
+      const controller = new AbortController();
+      selectAbortRef.current = controller;
+      return selectNetworkOffer(offer, controller.signal);
+    },
+    retry: false,
+    onError: (error) => {
+      // The provider no longer accepts referrals on this offer: pick another one
+      // from a fresh discover instead of retrying.
+      if (networkBecknError(error)?.code !== REFERRAL_ERROR_CODES.unavailable) {
+        return;
+      }
+      setNetworkOffer(null);
+      setChoosingDestination(true);
+      setDestinationError(t("ccn_referral_error_unavailable"));
+      setRediscoverKey((key) => key + 1);
+    },
+  });
+  useEffect(() => () => selectAbortRef.current?.abort(), []);
+  const selectOffer = (offer: NetworkOffer | null) => {
+    selectAbortRef.current?.abort();
+    selectMutation.reset();
+    setNetworkQuestionnaireId("");
+    setReviewResults([]);
+    if (offer) selectMutation.mutate(offer);
+  };
+  const selectedOffer = isSameNetworkOffer(
+    selectMutation.variables,
+    networkOffer,
+  );
+  const networkAvailability = selectedOffer
+    ? selectMutation.data?.availability
+    : undefined;
+  const networkForms = networkRequestForms(networkAvailability);
+  const networkQuestionnaire = networkQuestionnaireId
+    ? networkForms.find((item) => item.id === networkQuestionnaireId)
+    : networkForms[0];
+  const networkUnsupported =
+    networkQuestionnaire &&
+    hasUnsupportedReferralQuestions(networkQuestionnaire.questions);
+  const networkSelected = selectedOffer && selectMutation.isSuccess;
+  const networkReferralType = networkOfferReferralType(
+    networkOffer,
+    networkAvailability,
+  );
+  const formQuestionnaire = networkOffer ? networkQuestionnaire : questionnaire;
   const createMutation = useMutation<ReferralRetrieve, Error, ReferralCreate>({
     mutationFn: mutate(referralApi.create),
     retry: false,
@@ -321,12 +424,18 @@ function CreateReferralContent({
       sendErrorRef.current?.focus({ preventScroll: true });
     }
   }, [createMutation.isError]);
-  const networkMutation = useMutation<ReferralRetrieve, Error, NetworkOffer>({
-    mutationFn: async (offer) => {
+  const networkMutation = useMutation<
+    ReferralRetrieve,
+    Error,
+    Pick<NetworkReferralRequest, "offer" | "availability" | "form">
+  >({
+    mutationFn: async ({ offer, availability, form }) => {
       if (!facilityId) throw new Error("ccn_referral_not_created");
       const transaction = await submitNetworkReferral(
         {
           offer,
+          availability,
+          form,
           facilityId,
           patientId,
           encounterId,
@@ -375,10 +484,52 @@ function CreateReferralContent({
       headingRef.current?.focus({ preventScroll: true });
     });
   };
+  const chooseAnotherNetworkDestination = () => {
+    resetSend();
+    setNetworkOffer(null);
+    selectOffer(null);
+    setFormReady(false);
+    setChoosingDestination(true);
+    setDestinationError(t("ccn_referral_error_unavailable"));
+    setRediscoverKey((key) => key + 1);
+    moveTo("edit");
+  };
+  const selectNetworkDestination = (
+    offer: NetworkOffer | null,
+    options?: { auto?: boolean },
+  ) => {
+    setDestinationError(undefined);
+    // The title follows the destination until the user edits it.
+    const titleFollowsDestination =
+      !title.trim() ||
+      !!availability ||
+      (!!networkOffer && title === networkOfferLabel(networkOffer));
+    if (!offer) {
+      if (titleFollowsDestination && networkOffer) setTitle("");
+      setNetworkOffer(null);
+      selectOffer(null);
+      setFormReady(false);
+      resetSend();
+      return;
+    }
+    const sameOffer =
+      isSameNetworkOffer(networkOffer, offer) &&
+      (selectMutation.isPending || selectMutation.isSuccess);
+    setNetworkOffer(offer);
+    setAvailability(null);
+    if (titleFollowsDestination) setTitle(networkOfferLabel(offer));
+    resetSend();
+    if (!sameOffer) {
+      setFormReady(false);
+      selectOffer(offer);
+    }
+    // A preselected (only) offer keeps the dropdown open so it can be changed.
+    if (!options?.auto) setChoosingDestination(false);
+  };
   const review = (results: ReferralQuestionnaireResult[]) => {
     if (
-      !availability ||
-      !questionnaire ||
+      !(networkOffer ? networkSelected : availability) ||
+      !formQuestionnaire ||
       !formReady ||
       !title.trim() ||
       sending
@@ -390,7 +541,17 @@ function CreateReferralContent({
   const send = () => {
     if (sending || step !== "review") return;
     if (networkOffer) {
-      networkMutation.mutate(networkOffer);
+      if (!networkSelected) return;
+      networkMutation.mutate({
+        offer: networkOffer,
+        availability: networkAvailability,
+        form: networkQuestionnaire
+          ? {
+              questionnaireId: networkQuestionnaire.id,
+              results: reviewResults,
+            }
+          : undefined,
+      });
       return;
     }
     if (!availability || !questionnaire) return;
@@ -470,11 +631,28 @@ function CreateReferralContent({
                   {step === "review" && <ArrowLeft className="size-4" />}
                   {t(step === "review" ? "referral_back_to_editing" : "cancel")}
                 </Button>
-                {step === "edit" && networkOffer ? (
+                {step === "edit" && networkOffer && !networkQuestionnaire ? (
                   <Button
                     type="button"
-                    disabled={!title.trim()}
-                    onClick={() => moveTo("review")}
+                    disabled={!title.trim() || !networkSelected}
+                    onClick={() => {
+                      setReviewResults([]);
+                      moveTo("review");
+                    }}
+                  >
+                    {t("referral_review")}
+                    <ArrowRight className="size-4" />
+                  </Button>
+                ) : step === "edit" && networkOffer ? (
+                  <Button
+                    type="submit"
+                    form={formId}
+                    disabled={
+                      !networkSelected ||
+                      !formReady ||
+                      networkUnsupported ||
+                      !title.trim()
+                    }
                   >
                     {t("referral_review")}
                     <ArrowRight className="size-4" />
@@ -546,6 +724,7 @@ function CreateReferralContent({
                         <NetworkOfferSummary
                           offer={networkOffer}
                           referralType={networkReferralType}
+                          availability={networkAvailability}
                         />
                       ) : (
                         availability && (
@@ -583,9 +762,11 @@ function CreateReferralContent({
                   <ReferralDestinationPicker
                     selected={availability}
                     onSelect={(item) => {
+                      setDestinationError(undefined);
                       if (availability?.id !== item.id) {
                         setAvailability(item);
                         setNetworkOffer(null);
+                        selectOffer(null);
                         setQuestionnaireId("");
                         setTitle(item.name);
                         resetSend();
@@ -596,26 +777,16 @@ function CreateReferralContent({
                     network={
                       facilityId ? (
                         <NetworkDestinationSearch
-                          referralType={networkReferralType}
-                          onReferralTypeChange={(referralType) => {
-                            setNetworkReferralType(referralType);
-                            setNetworkOffer(null);
-                          }}
                           selected={networkOffer}
-                          onSelect={(offer) => {
-                            setNetworkOffer(offer);
-                            setAvailability(null);
-                            setFormReady(false);
-                            if (!title.trim() || availability) {
-                              setTitle(networkOfferLabel(offer));
-                            }
-                            resetSend();
-                            setChoosingDestination(false);
-                          }}
+                          onSelect={selectNetworkDestination}
+                          rediscoverKey={rediscoverKey}
                         />
                       ) : undefined
                     }
                   />
+                )}
+                {destinationError && (
+                  <FieldError>{destinationError}</FieldError>
                 )}
               </CreationSection>
               <CreationSection title={t("referral_reason")} number={2}>
@@ -676,6 +847,94 @@ function CreateReferralContent({
                   </p>
                 </CreationSection>
               )}
+              {networkOffer &&
+                !(
+                  networkSelected &&
+                  !networkQuestionnaire &&
+                  networkOffer.kind === "coordinator"
+                ) && (
+                  <CreationSection
+                    title={t("referral_service_questions")}
+                    number={4}
+                    framed={false}
+                  >
+                    {!networkSelected ? (
+                      selectMutation.isError ? (
+                        <div className="space-y-2">
+                          <FieldError>
+                            {networkSendError(selectMutation.error, t)}
+                          </FieldError>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => selectOffer(networkOffer)}
+                          >
+                            {t("try_again")}
+                          </Button>
+                        </div>
+                      ) : (
+                        <p
+                          role="status"
+                          className="flex items-center gap-2 py-6 text-sm"
+                        >
+                          <Spinner className="size-4 animate-spin" />
+                          {t("ccn_loading_network_form")}
+                        </p>
+                      )
+                    ) : !networkQuestionnaire ? (
+                      <p className="text-sm text-muted-foreground">
+                        {t("ccn_network_no_request_form")}
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-sm text-muted-foreground">
+                          {t("referral_service_questions_description")}
+                        </p>
+                        {networkForms.length > 1 && (
+                          <Field>
+                            <FieldLabel
+                              htmlFor={`${formId}-network-questionnaire`}
+                            >
+                              {t("referral_request_form")}
+                            </FieldLabel>
+                            <Select
+                              value={networkQuestionnaire.id}
+                              onValueChange={(value) => {
+                                setNetworkQuestionnaireId(value);
+                                resetSend();
+                              }}
+                            >
+                              <SelectTrigger
+                                id={`${formId}-network-questionnaire`}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {networkForms.map((item) => (
+                                  <SelectItem key={item.id} value={item.id}>
+                                    {item.title}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </Field>
+                        )}
+                        <ReferralQuestionnaireForm
+                          key={`${networkOffer.transactionId}-${networkOffer.key}-${networkQuestionnaire.id}`}
+                          questionnaire={networkQuestionnaire}
+                          patientId={patientId}
+                          encounterId={encounterId}
+                          facilityId={facilityId}
+                          formId={formId}
+                          disabled={step === "review" || sending}
+                          onSubmit={review}
+                          onReadyChange={setFormReady}
+                        />
+                      </>
+                    )}
+                  </CreationSection>
+                )}
               {availability && (
                 <CreationSection
                   title={t("referral_service_questions")}
@@ -762,6 +1021,7 @@ function CreateReferralContent({
                   <NetworkOfferSummary
                     offer={networkOffer}
                     referralType={networkReferralType}
+                    availability={networkAvailability}
                   />
                 </CreationSection>
                 <CreationSection title={t("referral_reason")}>
@@ -778,6 +1038,17 @@ function CreateReferralContent({
                     {t("ccn_network_referral_description")}
                   </p>
                 </CreationSection>
+                {networkQuestionnaire && (
+                  <CreationSection title={t("referral_service_questions")}>
+                    <p className="text-sm font-semibold">
+                      {networkQuestionnaire.title}
+                    </p>
+                    <ReferralQuestionnaireAnswers
+                      results={reviewResults}
+                      questions={networkQuestionnaire.questions}
+                    />
+                  </CreationSection>
+                )}
               </div>
             )}
             {step === "review" && availability && questionnaire && (
@@ -828,6 +1099,33 @@ function CreateReferralContent({
                     {t("referral_send_delivery_unknown")}
                   </p>
                 )}
+                {networkOffer && isStaleNetworkForm(networkMutation.error) && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      resetSend();
+                      setFormReady(false);
+                      selectOffer(networkOffer);
+                      moveTo("edit");
+                    }}
+                  >
+                    {t("ccn_reload_network_form")}
+                  </Button>
+                )}
+                {networkOffer &&
+                  networkBecknError(networkMutation.error)?.code ===
+                    REFERRAL_ERROR_CODES.unavailable && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={chooseAnotherNetworkDestination}
+                    >
+                      {t("ccn_choose_another_provider")}
+                    </Button>
+                  )}
               </div>
             )}
           </div>

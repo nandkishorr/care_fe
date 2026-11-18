@@ -1,41 +1,24 @@
 import { QueryClient } from "@tanstack/react-query";
 
 import {
+  BecknLastError,
   isFailedTransaction,
   isNetworkAvailability,
   NetworkOffer,
-  ReferralNetworkCategory,
+  networkReferralBody,
+  NetworkReferralBodyInput,
+  networkSelectBody,
   ReferralTransactionRetrieve,
-  ReferralUrgency,
   transactionErrorText,
 } from "@/types/ccn/ccn";
 import { ccnReferralApi } from "@/types/ccn/ccnApi";
-import {
-  ReferralAvailabilityRead,
-  ReferralType,
-} from "@/types/emr/referral/referral";
+import { ReferralAvailabilityRead } from "@/types/emr/referral/referral";
 import { callApi } from "@/Utils/request/query";
+import { HTTPError } from "@/Utils/request/types";
 import { sleep } from "@/Utils/utils";
 
 export const NETWORK_POLL_INTERVAL_MS = 1500;
 const CALLBACK_TIMEOUT_MS = 90_000;
-
-export const HEALTH_SERVICE_TYPE_FOR_REFERRAL: Record<ReferralType, string> = {
-  consultation: "PHYSICAL_CONSULTATION",
-  lab: "LAB_TEST",
-};
-
-const CATEGORY_FOR_REFERRAL: Record<ReferralType, ReferralNetworkCategory> = {
-  consultation: "patient_care",
-  lab: "other",
-};
-
-/** Beckn urgency is `emergency` or a priority; the plugin treats >= 2 as urgent. */
-const URGENCY_PRIORITY: Record<ReferralUrgency, number> = {
-  routine: 1,
-  urgent: 2,
-  emergency: 3,
-};
 
 export class NetworkTransactionError extends Error {
   constructor(
@@ -72,55 +55,56 @@ async function waitForCallback(
   }
 }
 
-export interface NetworkReferralRequest {
+export interface NetworkReferralRequest extends NetworkReferralBodyInput {
   offer: NetworkOffer;
-  facilityId: string;
-  patientId: string;
-  encounterId?: string;
-  title: string;
-  reason: string;
-  referralType: ReferralType;
-  urgency: ReferralUrgency;
 }
 
-export type NetworkReferralStep = "select" | "confirm";
+export type NetworkReferralStep = "init" | "confirm";
 
 /**
- * Sends a referral over the network: `select` the discovered offer, then
- * `confirm` it. The plugin creates the origin Care referral when the
- * coordinator activates the contract and exposes it as `referral_id`.
+ * Selects a discovered offer and waits for `on_select`. The returned
+ * transaction carries the receiving `availability` and the request forms the
+ * referral has to answer before `init` / `confirm`.
+ */
+export async function selectNetworkOffer(
+  offer: NetworkOffer,
+  signal?: AbortSignal,
+): Promise<ReferralTransactionRetrieve> {
+  const transactionId = offer.transactionId;
+  await callApi(ccnReferralApi.select, {
+    pathParams: { transactionId },
+    body: networkSelectBody(offer),
+    signal,
+  });
+  return waitForCallback(transactionId, "select", signal);
+}
+
+/**
+ * Sends a selected offer: `init` lets the receiving side validate the request
+ * form without creating anything, then `confirm` creates both referrals. The
+ * origin Care referral is exposed as `referral_id`. A rejected `init` can be
+ * fixed and resent on the same transaction.
  */
 export async function submitNetworkReferral(
   request: NetworkReferralRequest,
   onStep: (step: NetworkReferralStep) => void,
   signal?: AbortSignal,
 ): Promise<ReferralTransactionRetrieve> {
-  const { offer } = request;
-  const transactionId = offer.transactionId;
+  const transactionId = request.offer.transactionId;
+  const body = networkReferralBody(request);
 
-  onStep("select");
-  await callApi(ccnReferralApi.select, {
+  onStep("init");
+  await callApi(ccnReferralApi.init, {
     pathParams: { transactionId },
-    body: { offer_id: offer.offerId, context: offer.context },
+    body,
     signal,
   });
-  await waitForCallback(transactionId, "select", signal);
+  await waitForCallback(transactionId, "init", signal);
 
   onStep("confirm");
   await callApi(ccnReferralApi.confirm, {
     pathParams: { transactionId },
-    body: {
-      facility: request.facilityId,
-      patient: request.patientId,
-      ...(request.encounterId ? { encounter: request.encounterId } : {}),
-      title: request.title,
-      reason: request.reason || undefined,
-      category: CATEGORY_FOR_REFERRAL[request.referralType],
-      offer_id: offer.offerId,
-      assigned_facility_id: offer.providerId,
-      emergency: request.urgency === "emergency",
-      priority: URGENCY_PRIORITY[request.urgency],
-    },
+    body,
     signal,
   });
   return waitForCallback(transactionId, "confirm", signal);
@@ -156,4 +140,28 @@ export function refreshNetworkTransaction(
 export function networkErrorDetail(error: unknown): string | undefined {
   if (!(error instanceof NetworkTransactionError)) return undefined;
   return transactionErrorText(error.transaction?.last_error);
+}
+
+/**
+ * The Beckn error behind a failed network action: the receiving BPP's
+ * `last_error`, or the `beckn_error` the plugin answered the action with.
+ */
+export function networkBecknError(error: unknown): BecknLastError | undefined {
+  if (error instanceof NetworkTransactionError) {
+    return error.transaction?.last_error ?? undefined;
+  }
+  if (!(error instanceof HTTPError) || error.status !== 400) return undefined;
+  const errors = (error.cause as { errors?: unknown } | undefined)?.errors;
+  if (!Array.isArray(errors)) return undefined;
+  const becknError = errors.find(
+    (item): item is { code?: unknown; msg?: unknown } =>
+      !!item &&
+      typeof item === "object" &&
+      (item as { type?: unknown }).type === "beckn_error",
+  );
+  if (!becknError) return undefined;
+  return {
+    code: typeof becknError.code === "string" ? becknError.code : undefined,
+    message: typeof becknError.msg === "string" ? becknError.msg : undefined,
+  };
 }

@@ -16,48 +16,69 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 
-import {
-  HEALTH_SERVICE_TYPE_FOR_REFERRAL,
-  NETWORK_POLL_INTERVAL_MS,
-} from "@/components/Referral/network/networkReferral";
+import { NETWORK_POLL_INTERVAL_MS } from "@/components/Referral/network/networkReferral";
 
 import { cn } from "@/lib/utils";
 import {
   BecknActionResponse,
   BecknDiscoverBody,
   extractNetworkOffers,
+  groupNetworkOffers,
   isAwaitingCallback,
   isFailedTransaction,
   NetworkOffer,
-  networkOfferLabel,
+  NetworkOfferKind,
+  networkOfferValue,
+  networkProviderKey,
   ReferralTransactionRetrieve,
   transactionErrorText,
 } from "@/types/ccn/ccn";
 import { ccnMessageApi, ccnReferralApi } from "@/types/ccn/ccnApi";
-import { ReferralType } from "@/types/emr/referral/referral";
 import mutate from "@/Utils/request/mutate";
 import query from "@/Utils/request/query";
 
-const REFERRAL_TYPES: ReferralType[] = ["consultation", "lab"];
 // Late responders keep answering a broadcast discover for a while.
 const RESPONDER_WINDOW_MS = 20_000;
 
-interface NetworkDestinationSearchProps {
-  referralType: ReferralType;
-  onReferralTypeChange: (referralType: ReferralType) => void;
-  selected: NetworkOffer | null;
-  onSelect: (offer: NetworkOffer) => void;
+export function NetworkOfferKindBadge({ kind }: { kind: NetworkOfferKind }) {
+  const { t } = useTranslation();
+  return (
+    <Badge
+      variant={kind === "coordinator" ? "secondary" : "info"}
+      size="xs"
+      className="shrink-0"
+    >
+      {t(`ccn_network_offer_${kind}`)}
+    </Badge>
+  );
 }
 
+interface NetworkDestinationSearchProps {
+  selected: NetworkOffer | null;
+  /**
+   * `null` clears the destination when another provider is picked. `auto` is
+   * set when the provider's only offer is preselected: the dropdown stays open.
+   */
+  onSelect: (offer: NetworkOffer | null, options?: { auto?: boolean }) => void;
+  /** Bumped by the parent to search the network again (e.g. after a `70005`). */
+  rediscoverKey?: number;
+}
+
+/**
+ * Finds referral destinations on the CCN network. Discover is not narrowed by
+ * service or referral type (referral resources have no service type);
+ * appointment offers are dropped. The user picks a provider, then one of its
+ * referral units or coordination desks.
+ */
 export function NetworkDestinationSearch({
-  referralType,
-  onReferralTypeChange,
   selected,
   onSelect,
+  rediscoverKey = 0,
 }: NetworkDestinationSearchProps) {
   const { t } = useTranslation();
   const id = useId();
   const [search, setSearch] = useState("");
+  const [providerKey, setProviderKey] = useState<string>();
   const [transactionId, setTransactionId] = useState<string>();
   const [startedAt, setStartedAt] = useState(0);
   const discoverMutation = useMutation<
@@ -73,20 +94,17 @@ export function NetworkDestinationSearch({
     },
   });
   const { mutate: runDiscover } = discoverMutation;
-  const discover = (textSearch: string) =>
-    runDiscover({
-      health_service_type: HEALTH_SERVICE_TYPE_FOR_REFERRAL[referralType],
-      text_search: textSearch.trim() || undefined,
-    });
-  // Discover as soon as the network destination (or a new referral type) is chosen.
-  const lastDiscovered = useRef<ReferralType>(undefined);
+  const discover = (textSearch: string) => {
+    const text = textSearch.trim();
+    runDiscover(text ? { text_search: text } : {});
+  };
+  // Discover as soon as the network destination is chosen, and when asked to again.
+  const lastDiscovered = useRef<number>(undefined);
   useEffect(() => {
-    if (lastDiscovered.current === referralType) return;
-    lastDiscovered.current = referralType;
-    runDiscover({
-      health_service_type: HEALTH_SERVICE_TYPE_FOR_REFERRAL[referralType],
-    });
-  }, [referralType, runDiscover]);
+    if (lastDiscovered.current === rediscoverKey) return;
+    lastDiscovered.current = rediscoverKey;
+    runDiscover({});
+  }, [rediscoverKey, runDiscover]);
 
   const transactionQuery = useQuery<ReferralTransactionRetrieve>({
     queryKey: ["ccn", "referral", "transaction", transactionId],
@@ -102,12 +120,17 @@ export function NetworkDestinationSearch({
         : false,
   });
   const status = transactionQuery.data?.status;
-  const responded = !!status && !isAwaitingCallback(status);
-  const failed = isFailedTransaction(status);
+  // `select` runs on the same transaction, so later statuses must not hide
+  // the providers it already answered with.
+  const discovered = !!transactionQuery.data?.actions?.includes("ON_DISCOVER");
+  const responded = !!status && (discovered || !isAwaitingCallback(status));
+  const failed = !discovered && isFailedTransaction(status);
   const timedOut =
     !!transactionQuery.data &&
     !responded &&
     transactionQuery.dataUpdatedAt - startedAt >= RESPONDER_WINDOW_MS;
+  // The stored callbacks, not `catalogs/`: their envelopes carry the network
+  // and BAP routing `select` has to send along with the catalog's BPP.
   const messagesQuery = useQuery({
     queryKey: ["ccn", "messages", transactionId, "on_discover"],
     queryFn: query(ccnMessageApi.bap, {
@@ -125,32 +148,39 @@ export function NetworkDestinationSearch({
         ? NETWORK_POLL_INTERVAL_MS * 2
         : false,
   });
-  const offers = extractNetworkOffers(messagesQuery.data?.results ?? []);
+  const providers = groupNetworkOffers(
+    extractNetworkOffers(messagesQuery.data?.results ?? []),
+  );
+  const activeProviderKey =
+    providerKey ?? (selected ? networkProviderKey(selected) : undefined);
+  const activeProvider = providers.find(
+    (provider) => provider.key === activeProviderKey,
+  );
+  const selectedValue =
+    selected &&
+    activeProvider?.offers.some(
+      (offer) => networkOfferValue(offer) === networkOfferValue(selected),
+    )
+      ? networkOfferValue(selected)
+      : "";
   const searching =
     discoverMutation.isPending ||
     (!!transactionId && !responded && !timedOut && !transactionQuery.isError);
 
+  const pickProvider = (key: string) => {
+    setProviderKey(key);
+    const provider = providers.find((item) => item.key === key);
+    if (!provider) return;
+    if (provider.offers.length === 1) {
+      onSelect(provider.offers[0], { auto: true });
+    } else if (selected && networkProviderKey(selected) !== key) {
+      onSelect(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
-        <Field className="w-48">
-          <FieldLabel htmlFor={`${id}-type`}>{t("referral_type")}</FieldLabel>
-          <Select
-            value={referralType}
-            onValueChange={(value: ReferralType) => onReferralTypeChange(value)}
-          >
-            <SelectTrigger id={`${id}-type`}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {REFERRAL_TYPES.map((type) => (
-                <SelectItem key={type} value={type}>
-                  {t(`referral_type_${type}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
         <form
           className="flex min-w-0 flex-1 items-end gap-2"
           onSubmit={(event) => {
@@ -211,50 +241,56 @@ export function NetworkDestinationSearch({
             {t("ccn_network_no_response")}
           </p>
         )}
-        {responded && !failed && !messagesQuery.isPending && !offers.length && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("ccn_no_network_providers")}
-          </p>
-        )}
+        {responded &&
+          !failed &&
+          !messagesQuery.isPending &&
+          !providers.length && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {t("ccn_no_network_providers")}
+            </p>
+          )}
       </div>
-      {offers.length > 0 && (
+      {providers.length > 0 && (
         <div
           role="radiogroup"
           aria-label={t("ccn_network_providers")}
           className="grid gap-2 sm:grid-cols-2"
         >
-          {offers.map((offer) => {
-            const isSelected =
-              selected?.offerId === offer.offerId &&
-              selected.context.bpp_id === offer.context.bpp_id;
+          {providers.map((provider) => {
+            const isActive = provider.key === activeProvider?.key;
             return (
               <button
-                key={offer.key}
+                key={provider.key}
                 type="button"
                 role="radio"
-                aria-checked={isSelected}
-                onClick={() => onSelect(offer)}
+                aria-checked={isActive}
+                onClick={() => pickProvider(provider.key)}
                 className={cn(
                   "flex min-w-0 items-start gap-2 rounded-lg border border-border bg-background p-3 text-left text-sm hover:bg-muted/50 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
-                  isSelected && "border-primary ring-1 ring-primary",
+                  isActive && "border-primary ring-1 ring-primary",
                 )}
               >
                 <Check
                   aria-hidden="true"
                   className={cn(
                     "mt-0.5 size-4 shrink-0 text-primary",
-                    !isSelected && "opacity-0",
+                    !isActive && "opacity-0",
                   )}
                 />
                 <span className="min-w-0 flex-1 space-y-1">
                   <span className="block break-words font-medium">
-                    {networkOfferLabel(offer)}
+                    {provider.name}
                   </span>
-                  {offer.context.bpp_id && (
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {offer.context.bpp_id}
-                    </span>
-                  )}
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {[
+                      t("ccn_network_services_count", {
+                        count: provider.offers.length,
+                      }),
+                      provider.bppId,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
                 </span>
                 <Badge variant="info" size="xs" className="shrink-0">
                   {t("ccn_network")}
@@ -263,6 +299,49 @@ export function NetworkDestinationSearch({
             );
           })}
         </div>
+      )}
+      {activeProvider && (
+        <Field>
+          <FieldLabel htmlFor={`${id}-offer`}>
+            {t("ccn_network_service")}
+          </FieldLabel>
+          <Select
+            value={selectedValue}
+            onValueChange={(value) => {
+              const offer = activeProvider.offers.find(
+                (item) => networkOfferValue(item) === value,
+              );
+              if (offer) onSelect(offer);
+            }}
+          >
+            <SelectTrigger id={`${id}-offer`}>
+              <SelectValue placeholder={t("ccn_network_service_placeholder")} />
+            </SelectTrigger>
+            <SelectContent>
+              {activeProvider.offers.map((offer) => (
+                <SelectItem
+                  key={networkOfferValue(offer)}
+                  value={networkOfferValue(offer)}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate">
+                      {[
+                        offer.offerName ?? offer.offerId,
+                        offer.organizationName,
+                        ...offer.referralTypes.map((type) =>
+                          t(`referral_type_${type}`),
+                        ),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                    <NetworkOfferKindBadge kind={offer.kind} />
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
       )}
     </div>
   );
